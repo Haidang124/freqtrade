@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Any
 
-from pydantic import AwareDatetime, BaseModel, RootModel, SerializeAsAny, model_validator
+from pydantic import AwareDatetime, BaseModel, RootModel, SerializeAsAny, model_validator, Field
 
 from freqtrade.constants import DL_DATA_TIMEFRAMES, IntOrInf
 from freqtrade.enums import MarginMode, OrderTypeValues, SignalDirection, TradingMode
@@ -651,3 +651,12 @@ class CustomDataEntry(BaseModel):
 class ListCustomData(BaseModel):
     trade_id: int
     custom_data: list[CustomDataEntry]
+
+
+class ScarpeStrategyParams(BaseModel):
+    OC: float = Field(6.0, ge=1.0, le=20.0, description="OC parameter")
+    Extent: float = Field(60.0, ge=20.0, le=100.0, description="Extent parameter")
+    Amount: int = Field(100, ge=10, le=1000, description="Amount parameter")
+    TakeProfit: float = Field(35.0, ge=10.0, le=100.0, description="TakeProfit parameter")
+    Reduce: float = Field(6.0, ge=1.0, le=20.0, description="Reduce parameter")
+    UpReduce: float = Field(20.0, ge=5.0, le=50.0, description="UpReduce parameter")

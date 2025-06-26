@@ -44,6 +44,7 @@ from freqtrade.rpc.api_server.api_schemas import (
     PlotConfig,
     Profit,
     ResultMsg,
+    ScarpeStrategyParams,
     ShowConfig,
     Stats,
     StatusMsg,
@@ -553,3 +554,80 @@ def sysinfo():
 @router.get("/health", response_model=Health, tags=["info"])
 def health(rpc: RPC = Depends(get_rpc)):
     return rpc.health()
+
+
+@router.post("/strategy/scarpe/update_params", response_model=ResultMsg, tags=["strategy"])
+def update_scarpe_params(payload: ScarpeStrategyParams, rpc: RPC = Depends(get_rpc)):
+    """Update ScarpeStrategy parameters dynamically"""
+    logger.info(f"Received update request: {payload}")
+    try:
+        # Kiểm tra strategy có tồn tại không
+        if not rpc._freqtrade.strategy:
+            logger.error("No strategy loaded")
+            raise HTTPException(status_code=400, detail="No strategy loaded")
+        
+        strategy = rpc._freqtrade.strategy
+        strategy_name = strategy.get_strategy_name()
+        logger.info(f"Current strategy: {strategy_name}")
+        
+        # Kiểm tra có phải ScarpeStrategy không
+        if strategy_name != "ScarpeStrategy":
+            logger.error(f"Wrong strategy: {strategy_name}")
+            raise HTTPException(status_code=400, detail=f"Current strategy is {strategy_name}, not ScarpeStrategy")
+        
+        # Kiểm tra các thuộc tính có tồn tại không
+        if not hasattr(strategy, 'OC'):
+            logger.error("Strategy does not have OC parameter")
+            raise HTTPException(status_code=400, detail="Strategy does not have OC parameter")
+        
+        logger.info("Updating parameters...")
+        # Cập nhật parameters
+        strategy.OC.value = payload.OC
+        strategy.Extent.value = payload.Extent
+        strategy.Amount.value = payload.Amount
+        strategy.TakeProfit.value = payload.TakeProfit
+        strategy.Reduce.value = payload.Reduce
+        strategy.UpReduce.value = payload.UpReduce
+        
+        logger.info(f"ScarpeStrategy parameters updated: OC={payload.OC}, Extent={payload.Extent}, Amount={payload.Amount}, TP={payload.TakeProfit}, Reduce={payload.Reduce}, UpReduce={payload.UpReduce}")
+        
+        return {"status": "Parameters updated successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating ScarpeStrategy parameters: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to update parameters: {str(e)}")
+
+
+@router.get("/strategy/scarpe/get_params", response_model=ScarpeStrategyParams, tags=["strategy"])
+def get_scarpe_params(rpc: RPC = Depends(get_rpc)):
+    """Get current ScarpeStrategy parameters"""
+    try:
+        # Kiểm tra strategy có tồn tại không
+        if not rpc._freqtrade.strategy:
+            raise HTTPException(status_code=400, detail="No strategy loaded")
+        
+        strategy = rpc._freqtrade.strategy
+        strategy_name = strategy.get_strategy_name()
+        
+        # Kiểm tra có phải ScarpeStrategy không
+        if strategy_name != "ScarpeStrategy":
+            raise HTTPException(status_code=400, detail=f"Current strategy is {strategy_name}, not ScarpeStrategy")
+        
+        # Kiểm tra các thuộc tính có tồn tại không
+        if not hasattr(strategy, 'OC'):
+            raise HTTPException(status_code=400, detail="Strategy does not have OC parameter")
+        
+        return ScarpeStrategyParams(
+            OC=strategy.OC.value,
+            Extent=strategy.Extent.value,
+            Amount=strategy.Amount.value,
+            TakeProfit=strategy.TakeProfit.value,
+            Reduce=strategy.Reduce.value,
+            UpReduce=strategy.UpReduce.value
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting ScarpeStrategy parameters: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting parameters: {str(e)}")

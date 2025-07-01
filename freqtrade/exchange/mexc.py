@@ -1,17 +1,18 @@
 """MEXC exchange subclass"""
 
 import logging
+from copy import deepcopy
 from datetime import datetime
 from typing import Any
 
 import ccxt
 
 from freqtrade.constants import BuySell
-from freqtrade.enums import MarginMode, PriceType, TradingMode
+from freqtrade.enums import CandleType, MarginMode, PriceType, TradingMode
 from freqtrade.exceptions import DDosProtection, ExchangeError, OperationalException, TemporaryError
 from freqtrade.exchange import Exchange
 from freqtrade.exchange.common import retrier
-from freqtrade.exchange.exchange_types import CcxtOrder, FtHas
+from freqtrade.exchange.exchange_types import CcxtOrder, FtHas, OHLCVResponse
 
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,10 @@ class Mexc(Exchange):
         },
         "exchange_has_overrides": {
             "fetchOrder": True,
+        },
+        # MEXC specific OHLCV parameters for futures
+        "ohlcv_params": {
+            "price": "mark"  # Use mark price for futures
         },
     }
 
@@ -152,6 +157,47 @@ class Mexc(Exchange):
             ordertype != "market"
             or self._ft_has.get("marketOrderRequiresPrice", False)
         )
+
+    def _async_get_candle_history(
+        self,
+        pair: str,
+        timeframe: str,
+        candle_type: CandleType,
+        since_ms: int | None = None,
+    ) -> OHLCVResponse:
+        """
+        Override for MEXC to handle futures OHLCV properly
+        """
+        try:
+            # For MEXC futures, we need to specify price type
+            params = deepcopy(self._ft_has.get("ohlcv_params", {}))
+            
+            if self.trading_mode == TradingMode.FUTURES:
+                # MEXC futures requires specific price type
+                if candle_type == CandleType.MARK:
+                    params["price"] = "mark"
+                elif candle_type == CandleType.FUTURES:
+                    params["price"] = "mark"  # Use mark price for futures
+                else:
+                    params["price"] = "mark"  # Default to mark price
+            
+            # Call parent method with modified params
+            return super()._async_get_candle_history(
+                pair=pair,
+                timeframe=timeframe,
+                candle_type=candle_type,
+                since_ms=since_ms,
+            )
+            
+        except Exception as e:
+            logger.warning(f"MEXC OHLCV fetch failed: {e}")
+            # Fallback to parent method
+            return super()._async_get_candle_history(
+                pair=pair,
+                timeframe=timeframe,
+                candle_type=candle_type,
+                since_ms=since_ms,
+            )
 
     def dry_run_liquidation_price(
         self,

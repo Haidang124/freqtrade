@@ -13,6 +13,7 @@ from freqtrade.exceptions import DDosProtection, ExchangeError, OperationalExcep
 from freqtrade.exchange import Exchange
 from freqtrade.exchange.common import retrier
 from freqtrade.exchange.exchange_types import CcxtOrder, FtHas, OHLCVResponse
+from freqtrade.util.datetime_helpers import dt_from_ts
 
 
 logger = logging.getLogger(__name__)
@@ -61,7 +62,7 @@ class Mexc(Exchange):
         },
         # MEXC specific OHLCV parameters for futures
         "ohlcv_params": {
-            "price": "mark"  # Use mark price for futures
+            "price": "default"  # Default price type for futures
         },
     }
 
@@ -158,7 +159,7 @@ class Mexc(Exchange):
             or self._ft_has.get("marketOrderRequiresPrice", False)
         )
 
-    def _async_get_candle_history(
+    async def _async_get_candle_history(
         self,
         pair: str,
         timeframe: str,
@@ -166,38 +167,105 @@ class Mexc(Exchange):
         since_ms: int | None = None,
     ) -> OHLCVResponse:
         """
-        Override for MEXC to handle futures OHLCV properly
+        Override for MEXC to handle OHLCV properly.
+        MEXC only supports [default, index, mark] price types.
         """
         try:
-            # For MEXC futures, we need to specify price type
+            # Fetch OHLCV asynchronously
+            s = "(" + dt_from_ts(since_ms).isoformat() + ") " if since_ms is not None else ""
+            logger.debug(
+                "Fetching pair %s, %s, interval %s, since %s %s...",
+                pair,
+                candle_type,
+                timeframe,
+                since_ms,
+                s,
+            )
+            
+            # MEXC specific price type mapping
             params = deepcopy(self._ft_has.get("ohlcv_params", {}))
-            
-            if self.trading_mode == TradingMode.FUTURES:
-                # MEXC futures requires specific price type
-                if candle_type == CandleType.MARK:
-                    params["price"] = "mark"
-                elif candle_type == CandleType.FUTURES:
-                    params["price"] = "mark"  # Use mark price for futures
-                else:
-                    params["price"] = "mark"  # Default to mark price
-            
-            # Call parent method with modified params
-            return super()._async_get_candle_history(
-                pair=pair,
-                timeframe=timeframe,
-                candle_type=candle_type,
-                since_ms=since_ms,
+            candle_limit = self.ohlcv_candle_limit(
+                timeframe, candle_type=candle_type, since_ms=since_ms
             )
+
+            # Map candle types to MEXC supported price types
+            if candle_type == CandleType.SPOT:
+                # For spot trading, no price parameter needed
+                pass
+            elif candle_type == CandleType.MARK:
+                params["price"] = "mark"
+            elif candle_type == CandleType.INDEX:
+                params["price"] = "index"
+            elif candle_type == CandleType.PREMIUMINDEX:
+                # MEXC doesn't support premiumIndex, use mark instead
+                logger.debug(f"MEXC doesn't support premiumIndex, using mark price for {pair}")
+                params["price"] = "mark"
+            elif candle_type == CandleType.FUTURES:
+                # MEXC uses "default" instead of "futures"
+                params["price"] = "default"
+            elif candle_type == CandleType.FUNDING_RATE:
+                # Funding rate is handled separately
+                data = await self._fetch_funding_rate_history(
+                    pair=pair,
+                    timeframe=timeframe,
+                    limit=candle_limit,
+                    since_ms=since_ms,
+                )
+            else:
+                # For any other candle type, use default
+                params["price"] = "default"
             
-        except Exception as e:
-            logger.warning(f"MEXC OHLCV fetch failed: {e}")
-            # Fallback to parent method
-            return super()._async_get_candle_history(
-                pair=pair,
-                timeframe=timeframe,
-                candle_type=candle_type,
-                since_ms=since_ms,
-            )
+            if candle_type != CandleType.FUNDING_RATE:
+                # Add delay to avoid rate limiting
+                import asyncio
+                await asyncio.sleep(0.5)  # 500ms delay between requests
+                
+                # Retry logic for rate limiting
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        data = await self._api_async.fetch_ohlcv(
+                            pair, timeframe=timeframe, since=since_ms, limit=candle_limit, params=params
+                        )
+                        break
+                    except ccxt.ExchangeError as e:
+                        if "请求频率过快" in str(e) and attempt < max_retries - 1:
+                            logger.warning(f"Rate limit hit for {pair}, retrying in 2 seconds... (attempt {attempt + 1}/{max_retries})")
+                            await asyncio.sleep(2)
+                            continue
+                        else:
+                            raise
+            
+            # Some exchanges sort OHLCV in ASC order and others in DESC.
+            # Only sort if necessary to save computing time
+            try:
+                if data and data[0][0] > data[-1][0]:
+                    data = sorted(data, key=lambda x: x[0])
+            except IndexError:
+                logger.exception("Error loading %s. Result was %s.", pair, data)
+                return pair, timeframe, candle_type, [], self._ohlcv_partial_candle
+                
+            logger.debug("Done fetching pair %s, %s interval %s...", pair, candle_type, timeframe)
+            return pair, timeframe, candle_type, data, self._ohlcv_partial_candle
+
+        except ccxt.NotSupported as e:
+            raise OperationalException(
+                f"Exchange {self._api.name} does not support fetching historical "
+                f"candle (OHLCV) data. Message: {e}"
+            ) from e
+        except ccxt.DDoSProtection as e:
+            raise DDosProtection(e) from e
+        except (ccxt.OperationFailed, ccxt.ExchangeError) as e:
+            raise TemporaryError(
+                f"Could not fetch historical candle (OHLCV) data "
+                f"for {pair}, {timeframe}, {candle_type} due to {e.__class__.__name__}. "
+                f"Message: {e}"
+            ) from e
+        except ccxt.BaseError as e:
+            raise OperationalException(
+                f"Could not fetch historical candle (OHLCV) data for "
+                f"{pair}, {timeframe}, {candle_type}. Message: {e}"
+            ) from e
 
     def dry_run_liquidation_price(
         self,

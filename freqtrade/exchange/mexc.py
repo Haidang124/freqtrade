@@ -74,13 +74,16 @@ class Mexc(Exchange):
 
     @property
     def _ccxt_config(self) -> dict:
-        # Parameters to add directly to ccxt sync/async initialization.
         config = {}
         if self.trading_mode == TradingMode.SPOT:
             config.update({"options": {"defaultType": "spot"}})
         elif self.trading_mode == TradingMode.FUTURES:
             config.update({"options": {"defaultType": "swap"}})
-        config.update(super()._ccxt_config)
+        # Hardcode key/secret để test ổn định
+        config["apiKey"] = "mx0vglaf7Q3iNkxBzA"
+        config["secret"] = "0ebc0b45759449beaa40c07b4b4820a2"
+        parent_config = super()._ccxt_config
+        config.update(parent_config)
         return config
 
     def market_is_future(self, market: dict[str, Any]) -> bool:
@@ -371,12 +374,11 @@ class Mexc(Exchange):
     def fetch_order(self, order_id: str, pair: str, params: dict | None = None) -> CcxtOrder:
         """
         Fetch order from MEXC.
-        
-        :param order_id: Order ID
-        :param pair: Trading pair
-        :param params: Additional parameters
-        :return: Order information
+        Nếu order_id là dry_run thì trả về None (hoặc raise ExchangeError dễ hiểu), tránh gọi lên sàn thật khi dry-run.
         """
+        if order_id.startswith('dry_run_'):
+            # Có thể trả về None hoặc raise ExchangeError với message rõ ràng
+            raise ExchangeError(f"Order {order_id} is a dry-run order and does not exist on MEXC.")
         try:
             return self._api.fetch_order(order_id, pair, params or {})
         except ccxt.OrderNotFound:

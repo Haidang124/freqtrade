@@ -1,0 +1,90 @@
+{
+    "$schema": "https://schema.freqtrade.io/schema.json",
+    "max_open_trades": 10,
+    "stake_currency": "USDT",
+    "stake_amount": 5,
+    "tradable_balance_ratio": 0.99,
+    "fiat_display_currency": "USD",
+    "dry_run": true,
+    "dry_run_wallet": 1000,
+    "cancel_open_orders_on_exit": true,
+    "trading_mode": "futures",
+    "margin_mode": "isolated",
+    "unfilledtimeout": {
+        "entry": 10,
+        "exit": 10,
+        "exit_timeout_count": 0,
+        "unit": "minutes"
+    },
+    "entry_pricing": {
+        "price_side": "same",
+        "use_order_book": true,
+        "order_book_top": 1,
+        "price_last_balance": 0.0,
+        "check_depth_of_market": {
+            "enabled": false,
+            "bids_to_ask_delta": 1
+        }
+    },
+    "exit_pricing":{
+        "price_side": "same",
+        "use_order_book": true,
+        "order_book_top": 1
+    },
+    "exchange": {
+        "name": "mexc",
+        "key": "mx0vglaf7Q3iNkxBzA",
+        "secret": "0ebc0b45759449beaa40c07b4b4820a2",
+        "ccxt_config": {
+            "enableRateLimit": true,
+            "timeout": 30000
+        },
+        "ccxt_async_config": {
+            "enableRateLimit": true,
+            "timeout": 30000
+        },
+        "pair_whitelist": ["RON/USDT:USDT"],
+        "pair_blacklist": []
+    },
+    "pairlists": [
+        {
+          "method": "StaticPairList"
+        }
+    ],
+    "telegram": {
+        "enabled": true,
+        "token": "7753319636:AAFT6AMv8LQ89T2AshNJCOYQpte7l5YufSY",
+        "chat_id": "7573855966"
+    },
+    "api_server": {
+        "enabled": true,
+        "listen_ip_address": "127.0.0.1",
+        "listen_port": 8000,
+        "verbosity": "error",
+        "enable_openapi": false,
+        "jwt_secret_key": "952f09b9db1dc75e4c44285bdf9a5c70407f4d928cdf146cbae8cc575ba980e3",
+        "ws_token": "x_x3OYLcqTdrZ4vP5_uNw7VkV7T_Z6VzCQ",
+        "CORS_origins": [],
+        "username": "scarpe",
+        "password": "admin123"
+    },
+    "bot_name": "freqtrade",
+    "initial_state": "running",
+    "force_entry_enable": false,
+    "internals": {
+        "process_throttle_secs": 5
+    },
+    "minimal_roi": {
+        "0": 0.1
+    },
+    "strategy_settings": {
+        "ScarpeStrategy": {
+            "OC": 3.0,
+            "Extent": 50.0,
+            "Amount": 5,
+            "TakeProfit": 35.0,
+            "Reduce": 6.0,
+            "UpReduce": 20.0
+        }
+    }
+}

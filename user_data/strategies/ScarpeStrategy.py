@@ -9,13 +9,20 @@ class ScarpeStrategy(IStrategy):
     process_only_new_candles = True
     startup_candle_count = 30
 
+    # Cấu hình timeout cho lệnh chờ - quan trọng!
+    unfilledtimeout = {
+        "entry": 60,  # 60 phút cho lệnh entry
+        "exit": 30,   # 30 phút cho lệnh exit
+        "unit": "minutes"
+    }
+
     # Cấu hình chiến lược - có thể tùy chỉnh trong config
-    OC = DecimalParameter(1.0, 20.0, default=6.0, decimals=1, space="buy", optimize=True, load=True)
-    Extent = DecimalParameter(20.0, 100.0, default=60.0, decimals=1, space="buy", optimize=True, load=True)
-    Amount = IntParameter(10, 1000, default=100, space="buy", optimize=True, load=True)
+    OC = DecimalParameter(1.0, 20.0, default=3.0, decimals=1, space="buy", optimize=True, load=False)
+    Extent = DecimalParameter(20.0, 100.0, default=50.0, decimals=1, space="buy", optimize=True, load=False)
+    Amount = IntParameter(1, 100, default=5, space="buy", optimize=True, load=True)
     TakeProfit = DecimalParameter(10.0, 100.0, default=35.0, decimals=1, space="sell", optimize=True, load=True)
     Reduce = DecimalParameter(1.0, 20.0, default=6.0, decimals=1, space="sell", optimize=True, load=True)
-    UpReduce = DecimalParameter(5.0, 50.0, default=20.0, decimals=1, space="sell", optimize=True, load=True)
+    UpReduce = DecimalParameter(10.0, 50.0, default=20.0, decimals=1, space="sell", optimize=True, load=True)
 
     order_types = {
         'entry': 'limit',
@@ -24,8 +31,8 @@ class ScarpeStrategy(IStrategy):
         'stoploss_on_exchange': False,
     }
     order_time_in_force = {'entry': 'GTC', 'exit': 'GTC'}
-    minimal_roi = {'0': 0.01}
-    stoploss = -0.2
+    minimal_roi = {'0': 0.1}
+    stoploss = -0.08  # Stop loss 15% thay vì 20%
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         # Tính toán biên độ OC và extent giá
@@ -58,14 +65,25 @@ class ScarpeStrategy(IStrategy):
         dataframe['exit_long'] = 0
         dataframe['exit_short'] = 0
         return dataframe
+    
+    def leverage(self, pair, current_time, current_rate, proposed_leverage, max_leverage, entry_tag, side, **kwargs):
+        # Luôn dùng đòn bẩy 20x, nhưng không vượt quá max_leverage sàn cho phép
+        return min(20, max_leverage)
 
     def custom_entry_price(self, pair, trade, current_time, proposed_rate, entry_tag, side, **kwargs):
         # Đặt lệnh ở giá open +/- OC%
-        last_candle = self.dp.get_analyzed_dataframe(pair, self.timeframe).iloc[-1]
-        if side == 'long':
-            return last_candle['open'] * (1 - self.OC.value / 100)
-        else:
-            return last_candle['open'] * (1 + self.OC.value / 100)
+        # Sửa lỗi: get_analyzed_dataframe trả về tuple (dataframe, last_updated)
+        analyzed_data = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+        if analyzed_data is not None:
+            dataframe, last_updated = analyzed_data
+            if len(dataframe) > 0:
+                last_candle = dataframe.iloc[-1]
+                if side == 'long':
+                    return last_candle['open'] * (1 - self.OC.value / 100)
+                else:
+                    return last_candle['open'] * (1 + self.OC.value / 100)
+        # Fallback về proposed_rate nếu không lấy được data
+        return proposed_rate
 
     def custom_exit(self, pair, trade, current_time, current_rate, current_profit, **kwargs):
         # TP động giảm dần theo số nến đã qua
@@ -82,12 +100,29 @@ class ScarpeStrategy(IStrategy):
         return None
 
     def check_entry_timeout(self, pair, trade, order, current_time, **kwargs):
-        # Hủy lệnh chờ nếu sang nến mới mà chưa khớp
-        last_candle_time = self.dp.get_analyzed_dataframe(pair, self.timeframe).iloc[-1]['date']
-        if order.open_date < last_candle_time:
+        # Sửa logic timeout - chỉ hủy lệnh sau khi đã chờ đủ thời gian
+        # Thời gian tối đa chờ lệnh: 30 phút
+        max_wait_time = timedelta(minutes=30)
+        
+        # Nếu lệnh đã chờ quá 30 phút thì hủy
+        if current_time - order.order_date > max_wait_time:
             return True  # Hủy lệnh
-        return False
+        
+        # Kiểm tra thêm: nếu giá hiện tại đã đi quá xa so với giá đặt lệnh
+        analyzed_data = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+        if analyzed_data is not None:
+            dataframe, last_updated = analyzed_data
+            if len(dataframe) > 0:
+                current_price = dataframe.iloc[-1]['close']
+                order_price = order.price
+                
+                # Nếu giá hiện tại cách xa giá đặt lệnh quá 5% thì hủy
+                price_diff_percent = abs(current_price - order_price) / order_price * 100
+                if price_diff_percent > 5:
+                    return True  # Hủy lệnh
+        
+        return False  # Giữ lệnh
 
     def custom_stake_amount(self, pair, current_time, current_rate, proposed_stake, min_stake, max_stake, leverage, entry_tag, side, **kwargs):
-        # Luôn đặt đúng Amount cấu hình
+        # Luôn đặt đúng Amount cấu hình, nhưng không vượt quá max_stake
         return min(self.Amount.value, max_stake) 

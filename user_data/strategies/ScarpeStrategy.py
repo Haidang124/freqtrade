@@ -11,15 +11,15 @@ class ScarpeStrategy(IStrategy):
 
     # Cấu hình timeout cho lệnh chờ - quan trọng!
     unfilledtimeout = {
-        "entry": 60,  # 60 phút cho lệnh entry
-        "exit": 30,   # 30 phút cho lệnh exit
+        "entry": 3,   # 3 phút cho lệnh entry
+        "exit": 2,    # 2 phút cho lệnh exit
         "unit": "minutes"
     }
 
     # Cấu hình chiến lược - có thể tùy chỉnh trong config
-    OC = DecimalParameter(1.0, 20.0, default=3.0, decimals=1, space="buy", optimize=True, load=False)
+    OC = DecimalParameter(1.0, 20.0, default=4.0, decimals=1, space="buy", optimize=True, load=False)
     Extent = DecimalParameter(20.0, 100.0, default=50.0, decimals=1, space="buy", optimize=True, load=False)
-    Amount = IntParameter(1, 100, default=5, space="buy", optimize=True, load=True)
+    Amount = IntParameter(1, 100, default=1, space="buy", optimize=True, load=True)
     TakeProfit = DecimalParameter(10.0, 100.0, default=35.0, decimals=1, space="sell", optimize=True, load=True)
     Reduce = DecimalParameter(1.0, 20.0, default=6.0, decimals=1, space="sell", optimize=True, load=True)
     UpReduce = DecimalParameter(10.0, 50.0, default=20.0, decimals=1, space="sell", optimize=True, load=True)
@@ -31,8 +31,7 @@ class ScarpeStrategy(IStrategy):
         'stoploss_on_exchange': False,
     }
     order_time_in_force = {'entry': 'GTC', 'exit': 'GTC'}
-    minimal_roi = {'0': 0.1}
-    stoploss = -0.08  # Stop loss 15% thay vì 20%
+    stoploss = -0.15  # Stop loss 8%
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         # Tính toán biên độ OC và extent giá
@@ -67,8 +66,8 @@ class ScarpeStrategy(IStrategy):
         return dataframe
     
     def leverage(self, pair, current_time, current_rate, proposed_leverage, max_leverage, entry_tag, side, **kwargs):
-        # Luôn dùng đòn bẩy 20x, nhưng không vượt quá max_leverage sàn cho phép
-        return min(20, max_leverage)
+        # Dùng margin 1x cho trade thật
+        return 2
 
     def custom_entry_price(self, pair, trade, current_time, proposed_rate, entry_tag, side, **kwargs):
         # Đặt lệnh ở giá open +/- OC%
@@ -91,20 +90,36 @@ class ScarpeStrategy(IStrategy):
         now = current_time
         n_candles = int((now - entry_time).total_seconds() // 60)
         tp_dynamic = self.TakeProfit.value - n_candles * self.Reduce.value
+        
         # Tính mức lợi nhuận mục tiêu dựa trên OC và Amount
         oc_val = trade.open_rate * self.OC.value / 100
         target_profit = tp_dynamic / 100 * oc_val * (trade.stake_amount / self.Amount.value)
-        # Nếu đạt TP hoặc TP âm thì chốt lệnh
+        
+        # 1. Chốt lời động
         if trade.calc_profit(current_rate) >= target_profit or tp_dynamic <= 0:
             return 'dynamic_tp'
+        
+        # 2. Cắt lỗ động - nếu lỗ quá 5% và đã giữ lệnh quá 5 phút
+        if current_profit < -0.05 and n_candles > 5:
+            return 'dynamic_sl'
+        
+        # 3. Cắt lỗ khi giá đi ngược quá xa so với entry
+        price_change = abs(current_rate - trade.open_rate) / trade.open_rate
+        if price_change > 0.08:  # Giá đi ngược quá 8%
+            return 'price_reversal_sl'
+        
+        # 4. Cắt lỗ khi giữ lệnh quá lâu (10 phút)
+        if n_candles > 10:
+            return 'timeout_sl'
+        
         return None
 
     def check_entry_timeout(self, pair, trade, order, current_time, **kwargs):
         # Sửa logic timeout - chỉ hủy lệnh sau khi đã chờ đủ thời gian
-        # Thời gian tối đa chờ lệnh: 30 phút
-        max_wait_time = timedelta(minutes=30)
+        # Thời gian tối đa chờ lệnh: 3 phút
+        max_wait_time = timedelta(minutes=3)
         
-        # Nếu lệnh đã chờ quá 30 phút thì hủy
+        # Nếu lệnh đã chờ quá 3 phút thì hủy
         if current_time - order.order_date > max_wait_time:
             return True  # Hủy lệnh
         
@@ -124,5 +139,5 @@ class ScarpeStrategy(IStrategy):
         return False  # Giữ lệnh
 
     def custom_stake_amount(self, pair, current_time, current_rate, proposed_stake, min_stake, max_stake, leverage, entry_tag, side, **kwargs):
-        # Luôn đặt đúng Amount cấu hình, nhưng không vượt quá max_stake
-        return min(self.Amount.value, max_stake) 
+        # Trade thật với 0.5 USDT mỗi lệnh
+        return 1 

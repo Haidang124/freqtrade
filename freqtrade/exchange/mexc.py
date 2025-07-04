@@ -84,6 +84,16 @@ class Mexc(Exchange):
         config["secret"] = "0ebc0b45759449beaa40c07b4b4820a2"
         parent_config = super()._ccxt_config
         config.update(parent_config)
+        
+        # Force MEXC to use v3 API instead of v1
+        config.update({
+            "urls": {
+                "api": {
+                    "public": "https://contract.mexc.com/api/v3",
+                    "private": "https://contract.mexc.com/api/v3",
+                }
+            }
+        })
         return config
 
     def market_is_future(self, market: dict[str, Any]) -> bool:
@@ -118,11 +128,46 @@ class Mexc(Exchange):
         except ccxt.BaseError as e:
             raise OperationalException(e) from e
 
+    def _get_positionType(self, side: BuySell, reduceOnly: bool):
+        """
+        Get position type for MEXC leverage setting.
+        :param side: 'buy' or 'sell'
+        :param reduceOnly: True if this is a reduce-only order
+        :return: "1" for long, "2" for short
+        """
+        if not reduceOnly:
+            # Enter position
+            return "1" if side == "buy" else "2"
+        else:
+            # Exit position (reduce only)
+            return "1" if side == "sell" else "2"
+
+    @retrier
     def _lev_prep(self, pair: str, leverage: float, side: BuySell, accept_fail: bool = False):
         if self.trading_mode != TradingMode.SPOT:
-            params = {"leverage": leverage}
-            self.set_margin_mode(pair, self.margin_mode, accept_fail=True, params=params)
-            self._set_leverage(leverage, pair, accept_fail=True)
+            try:
+                # Determine openType based on margin_mode
+                open_type = "1" if self.margin_mode == MarginMode.ISOLATED else "2"
+                
+                res = self._api.set_leverage(
+                    leverage=leverage,
+                    symbol=pair,
+                    params={
+                        "openType": open_type,  # 1 for isolated, 2 for cross
+                        "positionType": self._get_positionType(side, False),
+                    },
+                )
+                self._log_exchange_response("set_leverage", res)
+
+            except ccxt.DDoSProtection as e:
+                raise DDosProtection(e) from e
+            except (ccxt.OperationFailed, ccxt.ExchangeError) as e:
+                if not accept_fail:
+                    raise TemporaryError(
+                        f"Could not set leverage due to {e.__class__.__name__}. Message: {e}"
+                    ) from e
+            except ccxt.BaseError as e:
+                raise OperationalException(e) from e
 
     def _get_params(
         self,
@@ -142,6 +187,10 @@ class Mexc(Exchange):
         if self.trading_mode == TradingMode.FUTURES:
             # MEXC specific parameters for futures
             params["position_idx"] = 0  # One-way position mode
+            
+            # Add leverage parameter for isolated margin orders
+            if self.margin_mode == MarginMode.ISOLATED:
+                params["leverage"] = leverage
         return params
 
     def _get_stop_params(self, side: BuySell, ordertype: str, stop_price: float) -> dict:

@@ -1,19 +1,28 @@
 {
     "$schema": "https://schema.freqtrade.io/schema.json",
-    "max_open_trades": 5,
+    "max_open_trades": 3,
     "stake_currency": "USDT",
-    "stake_amount": 3,
+    "stake_amount": 1,
     "tradable_balance_ratio": 0.99,
     "fiat_display_currency": "USD",
-    "dry_run": true,
+    "dry_run": false,
     "dry_run_wallet": 1000,
     "cancel_open_orders_on_exit": true,
     "trading_mode": "futures",
     "margin_mode": "isolated",
+    "ccxt_config": {
+        "enableRateLimit": true,
+        "timeout": 30000,
+        "setLeverage": false
+    },
+    "ccxt_async_config": {
+        "enableRateLimit": true,
+        "timeout": 30000,
+        "setLeverage": false
+    },
     "unfilledtimeout": {
-        "entry": 10,
-        "exit": 10,
-        "exit_timeout_count": 0,
+        "entry": 3,
+        "exit": 2,
         "unit": "minutes"
     },
     "entry_pricing": {
@@ -37,13 +46,26 @@
         "secret": "0ebc0b45759449beaa40c07b4b4820a2",
         "ccxt_config": {
             "enableRateLimit": true,
-            "timeout": 30000
+            "timeout": 30000,
+            "sandbox": false,
+            "defaultType": "swap",
+            "options": {
+                "defaultType": "swap",
+                "defaultMarginMode": "isolated"
+            },
+            "params": {
+                "openType": 1,
+                "reduceOnly": false,
+                "leverage": 2
+            }
         },
         "ccxt_async_config": {
             "enableRateLimit": true,
             "timeout": 30000
         },
-        "pair_whitelist": ["MIXIE/USDT:USDT"],
+        "trading_mode": "futures",
+        "margin_mode": "isolated",
+        "pair_whitelist": ["MIXIE/USDT:USDT", "CROSS/USDT:USDT", "ICNT/USDT:USDT", "GOG/USDT:USDT"],
         "pair_blacklist": []
     },
     "pairlists": [
@@ -74,17 +96,14 @@
     "internals": {
         "process_throttle_secs": 5
     },
-    "minimal_roi": {
-        "0": 0.1
-    },
     "strategy_settings": {
         "ScarpeStrategy": {
-            "OC": 3.0,
+            "OC": 6.0,
             "Extent": 50.0,
-            "Amount": 3,
+            "Amount": 1,
             "TakeProfit": 35.0,
             "Reduce": 6.0,
             "UpReduce": 20.0
         }
     }
-}
+} 
